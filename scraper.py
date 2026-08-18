@@ -1,799 +1,1403 @@
+"""
+FootballAI - Motor de dados usando Football-Data.org API v4
+
+IMPORTANTE:
+- Não usa soccerdata
+- Não usa FBref
+- Não usa Understat
+- Não importa o próprio scraper.py
+- Usa Football-Data.org diretamente
+- A API Key vem de Streamlit Secrets ou variável de ambiente
+"""
+
+import os
+from typing import Dict, List, Any, Optional
+
+import requests
 import streamlit as st
-import pandas as pd
-from datetime import datetime
-
-from scraper import FootballAIEngine
-from auditoria import AuditoriaPalpites
 
 
 # ============================================================
-# CONFIGURAÃ‡ÃƒO
+# CONFIGURAÇÃO
 # ============================================================
 
-st.set_page_config(
-    page_title="FootballAI Predictor Pro",
-    page_icon="ðŸ”®",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+BASE_URL = "https://api.football-data.org/v4"
+
+COMPETICOES = {
+    "Premier League": "PL",
+    "Brasileirao Serie A": "BSA",
+    "La Liga": "PD",
+    "Serie A": "SA",
+    "Bundesliga": "BL1",
+    "Ligue 1": "FL1",
+    "Liga Portugal": "PPL",
+    "Champions League": "CL",
+}
 
 
 # ============================================================
-# ESTILO
+# TOKEN
 # ============================================================
 
-st.markdown(
+def obter_token() -> str:
     """
-    <style>
-    .main-title {
-        font-size: 38px;
-        font-weight: 800;
-        margin-bottom: 0;
-    }
+    Procura a chave primeiro nos Secrets do Streamlit
+    e depois nas variáveis de ambiente.
+    """
 
-    .subtitle {
-        color: #94a3b8;
-        font-size: 16px;
-        margin-bottom: 25px;
-    }
-
-    .match-card {
-        padding: 20px;
-        border-radius: 15px;
-        border: 1px solid rgba(148,163,184,.18);
-        background: rgba(15,23,42,.55);
-        margin-bottom: 15px;
-    }
-
-    .team-name {
-        font-size: 20px;
-        font-weight: 700;
-    }
-
-    .market-card {
-        padding: 18px;
-        border-radius: 12px;
-        border: 1px solid rgba(148,163,184,.18);
-        margin-bottom: 10px;
-    }
-
-    .best-market {
-        font-size: 22px;
-        font-weight: 800;
-    }
-
-    .small-muted {
-        color: #94a3b8;
-        font-size: 13px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-# ============================================================
-# LIGAS
-# ============================================================
-
-LIGAS = [
-    "Premier League",
-    "La Liga",
-    "Serie A Italiana",
-    "Bundesliga",
-    "Ligue 1",
-    "Champions League",
-]
-
-
-# ============================================================
-# SIDEBAR
-# ============================================================
-
-st.sidebar.markdown("## ðŸ› ï¸ FootballAI")
-
-liga_atual = st.sidebar.selectbox(
-    "Campeonato:",
-    LIGAS,
-)
-
-aba_selecionada = st.sidebar.radio(
-    "NavegaÃ§Ã£o:",
-    [
-        "ðŸ—“ï¸ Palpites do Dia",
-        "ðŸ”Ž Pesquisa H2H",
-        "ðŸ“ˆ Desempenho",
-    ],
-)
-
-st.sidebar.markdown("---")
-
-if st.sidebar.button(
-    "ðŸ”„ Sincronizar dados",
-    use_container_width=True,
-):
-    st.cache_data.clear()
-    st.sidebar.success("Cache limpo. PrÃ³xima consulta serÃ¡ atualizada.")
-
-
-# ============================================================
-# SESSION STATE
-# ============================================================
-
-if (
-    "ai_engine" not in st.session_state
-    or st.session_state.get("liga_anterior") != liga_atual
-):
-    st.session_state.ai_engine = FootballAIEngine(
-        liga_nome=liga_atual
-    )
-    st.session_state.liga_anterior = liga_atual
-
-if "auditoria" not in st.session_state:
-    st.session_state.auditoria = AuditoriaPalpites()
-
-
-# ============================================================
-# CACHE DOS JOGOS
-# ============================================================
-
-@st.cache_data(ttl=600)
-def carregar_jogos_reais_cached(
-    liga_nome: str,
-    data_selecionada: str,
-):
-    engine = FootballAIEngine(liga_nome=liga_nome)
-
-    return engine.buscar_jogos_reais_api(
-        data_selecionada
-    )
-
-
-# ============================================================
-# FUNÃ‡ÃƒO DE ANÃLISE SEGURA
-# ============================================================
-
-def analisar_jogo(casa, fora):
     try:
-        resultado = st.session_state.ai_engine.analisar_confronto_completo(
-            casa,
-            fora,
+        token = st.secrets.get(
+            "FOOTBALL_DATA_ORG_KEY",
+            ""
         )
 
-        if not isinstance(resultado, dict):
+        if token:
+            return str(token).strip()
+
+    except Exception:
+        pass
+
+    return os.getenv(
+        "FOOTBALL_DATA_ORG_KEY",
+        ""
+    ).strip()
+
+
+# ============================================================
+# MOTOR PRINCIPAL
+# ============================================================
+
+class SoccerDataScraper:
+
+    def __init__(
+        self,
+        league_name: str = "Premier League",
+        season: Optional[str] = None
+    ):
+
+        self.league_name = league_name
+
+        self.competition = COMPETICOES.get(
+            league_name,
+            "PL"
+        )
+
+        self.season = self.normalizar_temporada(
+            season
+        )
+
+        self.token = obter_token()
+
+        self.last_events = []
+
+        self.last_error = ""
+
+
+    # ========================================================
+    # TEMPORADA
+    # ========================================================
+
+    @staticmethod
+    def normalizar_temporada(
+        season: Optional[str]
+    ) -> Optional[int]:
+
+        if not season:
             return None
 
-        return resultado
+        valor = str(season).strip()
 
-    except Exception as exc:
-        st.error(
-            f"NÃ£o foi possÃ­vel analisar {casa} vs {fora}: {exc}"
-        )
+        # 2024
+        if valor.isdigit() and len(valor) == 4:
+            return int(valor)
+
+        # 2024-2025
+        if "-" in valor:
+
+            primeiro = valor.split("-")[0]
+
+            if primeiro.isdigit():
+                return int(primeiro)
+
         return None
 
 
-# ============================================================
-# ABA 1 â€” PALPITES DO DIA
-# ============================================================
+    # ========================================================
+    # REQUEST CENTRAL
+    # ========================================================
 
-if aba_selecionada == "ðŸ—“ï¸ Palpites do Dia":
-
-    st.markdown(
-        '<div class="main-title">ðŸ”® FootballAI Predictor Pro</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        '<div class="subtitle">'
-        "AnÃ¡lise prÃ©-jogo baseada nos dados disponÃ­veis da Football-Data.org."
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    col_data, col_info = st.columns([1, 2])
-
-    with col_data:
-        data_escolhida = st.date_input(
-            "ðŸ“… Data dos jogos:",
-            value=datetime.now().date(),
-        )
-
-    data_pesquisa = data_escolhida.strftime("%Y-%m-%d")
-
-    with col_info:
-        st.info(
-            f"ðŸ† Campeonato selecionado: **{liga_atual}**"
-        )
-
-    st.markdown("---")
-
-    with st.spinner(
-        "âš½ Procurando jogos oficiais..."
+    def request_api(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None
     ):
-        lista_jogos = carregar_jogos_reais_cached(
-            liga_atual,
-            data_pesquisa,
-        )
 
-    if not lista_jogos:
+        if not self.token:
 
-        st.warning(
-            f"NÃ£o foram encontrados jogos da **{liga_atual}** "
-            f"para **{data_pesquisa}**."
-        )
-
-        st.caption(
-            "Verifique a data, a competiÃ§Ã£o e a chave "
-            "FOOTBALL_DATA_ORG_KEY nas Secrets do Streamlit."
-        )
-
-    else:
-
-        st.success(
-            f"âœ… {len(lista_jogos)} jogo(s) encontrado(s)."
-        )
-
-        # ----------------------------------------------------
-        # FILTRO OPCIONAL
-        # ----------------------------------------------------
-
-        mostrar_jogos = st.slider(
-            "Quantidade de jogos para analisar:",
-            min_value=1,
-            max_value=len(lista_jogos),
-            value=min(10, len(lista_jogos)),
-        )
-
-        jogos_exibidos = lista_jogos[:mostrar_jogos]
-
-        # ----------------------------------------------------
-        # CARDS
-        # ----------------------------------------------------
-
-        for idx, jogo in enumerate(jogos_exibidos):
-
-            casa = jogo.get("home", "?")
-            fora = jogo.get("away", "?")
-
-            st.markdown(
-                '<div class="match-card">',
-                unsafe_allow_html=True,
+            self.last_error = (
+                "FOOTBALL_DATA_ORG_KEY não foi encontrada."
             )
 
-            col_jogo, col_status = st.columns([4, 1])
+            return None
 
-            with col_jogo:
-                st.markdown(
-                    f'<div class="team-name">'
-                    f'âš½ {casa} vs {fora}'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
 
-            with col_status:
-                st.caption(
-                    jogo.get("status", "SCHEDULED")
-                )
-
-            data_jogo = jogo.get("date", "")
-
-            if data_jogo:
-                try:
-                    dt = datetime.fromisoformat(
-                        data_jogo.replace("Z", "+00:00")
-                    )
-                    st.caption(
-                        f"ðŸ• {dt.strftime('%d/%m/%Y %H:%M')}"
-                    )
-                except Exception:
-                    pass
-
-            res = analisar_jogo(casa, fora)
-
-            if res:
-
-                st.markdown("---")
-
-                melhor = res.get(
-                    "melhor_mercado",
-                    "Sem mercado",
-                )
-
-                chance = res.get(
-                    "melhor_chance",
-                    0,
-                )
-
-                st.info(
-                    f"ðŸŽ¯ **Melhor mercado:** "
-                    f"**{melhor}**  \n"
-                    f"ðŸ“Š **ConfianÃ§a do modelo:** `{chance}%`"
-                )
-
-                combinada_1 = res.get(
-                    "combinada_1",
-                    "",
-                )
-
-                pct_1 = res.get(
-                    "pct_combinada_1",
-                    0,
-                )
-
-                combinada_2 = res.get(
-                    "combinada_2",
-                    "",
-                )
-
-                pct_2 = res.get(
-                    "pct_combinada_2",
-                    0,
-                )
-
-                c1, c2 = st.columns(2)
-
-                with c1:
-                    st.markdown(
-                        f"ðŸ”¥ **Combo 1**  \n"
-                        f"{combinada_1}  \n"
-                        f"ConfianÃ§a estimada: **{pct_1}%**"
-                    )
-
-                with c2:
-                    st.markdown(
-                        f"ðŸ›¡ï¸ **Combo 2**  \n"
-                        f"{combinada_2}  \n"
-                        f"ConfianÃ§a estimada: **{pct_2}%**"
-                    )
-
-                # Auditoria
-                try:
-                    st.session_state.auditoria.registrar_palpite(
-                        casa=casa,
-                        fora=fora,
-                        mercado=melhor,
-                        chance=chance,
-                        combinada=combinada_1,
-                    )
-                except Exception:
-                    pass
-
-            st.markdown(
-                "</div>",
-                unsafe_allow_html=True,
-            )
-
-
-# ============================================================
-# ABA 2 â€” H2H
-# ============================================================
-
-elif aba_selecionada == "ðŸ”Ž Pesquisa H2H":
-
-    st.markdown(
-        '<div class="main-title">ðŸ”Ž AnÃ¡lise H2H</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        '<div class="subtitle">'
-        "Compare duas equipas e veja os mercados calculados pelo modelo."
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    with st.spinner("Carregando equipas..."):
-        try:
-            lista_equipas = (
-                st.session_state.ai_engine.obter_todas_equipas()
-            )
-        except Exception as exc:
-            lista_equipas = []
-            st.error(
-                f"Erro ao carregar equipas: {exc}"
-            )
-
-    if not lista_equipas:
-
-        st.warning(
-            "NÃ£o foi possÃ­vel carregar as equipas desta competiÃ§Ã£o."
-        )
-
-        st.info(
-            "Verifique a chave da Football-Data.org e se "
-            "a competiÃ§Ã£o estÃ¡ disponÃ­vel no teu plano."
-        )
-
-    else:
-
-        c1, c2 = st.columns(2)
-
-        with c1:
-            equipa_casa = st.selectbox(
-                "ðŸ  Equipa da Casa:",
-                lista_equipas,
-                index=0,
-            )
-
-        with c2:
-            index_fora = (
-                1 if len(lista_equipas) > 1 else 0
-            )
-
-            equipa_fora = st.selectbox(
-                "âœˆï¸ Equipa de Fora:",
-                lista_equipas,
-                index=index_fora,
-            )
-
-        st.markdown("---")
-
-        if st.button(
-            "ðŸ¤– ANALISAR CONFRONTO",
-            use_container_width=True,
-            type="primary",
-        ):
-
-            with st.spinner(
-                "Analisando forma, golos e classificaÃ§Ã£o..."
-            ):
-                res = analisar_jogo(
-                    equipa_casa,
-                    equipa_fora,
-                )
-
-            if res:
-
-                melhor = res.get(
-                    "melhor_mercado",
-                    "Sem mercado",
-                )
-
-                chance = res.get(
-                    "melhor_chance",
-                    0,
-                )
-
-                st.markdown(
-                    "### ðŸŽ¯ VEREDITO DO MODELO"
-                )
-
-                st.success(
-                    f"**{melhor}** â€” confianÃ§a **{chance}%**"
-                )
-
-                try:
-                    st.session_state.auditoria.registrar_palpite(
-                        casa=equipa_casa,
-                        fora=equipa_fora,
-                        mercado=melhor,
-                        chance=chance,
-                        combinada=res.get(
-                            "combinada_1",
-                            "",
-                        ),
-                    )
-                except Exception:
-                    pass
-
-                st.markdown("---")
-
-                # ------------------------------------------------
-                # MERCADOS
-                # ------------------------------------------------
-
-                st.subheader(
-                    "ðŸ“Š Mercados analisados"
-                )
-
-                mercados = res.get(
-                    "mercados",
-                    {},
-                )
-
-                if mercados:
-
-                    col_m1, col_m2 = st.columns(2)
-
-                    mercados_lista = list(
-                        mercados.items()
-                    )
-
-                    metade = (
-                        len(mercados_lista) + 1
-                    ) // 2
-
-                    with col_m1:
-                        for mercado, pct in mercados_lista[:metade]:
-
-                            st.write(
-                                f"ðŸ”¹ **{mercado}** â€” {pct}%"
-                            )
-
-                            st.progress(
-                                max(
-                                    0.0,
-                                    min(
-                                        1.0,
-                                        float(pct) / 100,
-                                    ),
-                                )
-                            )
-
-                    with col_m2:
-                        for mercado, pct in mercados_lista[metade:]:
-
-                            st.write(
-                                f"ðŸ”¹ **{mercado}** â€” {pct}%"
-                            )
-
-                            st.progress(
-                                max(
-                                    0.0,
-                                    min(
-                                        1.0,
-                                        float(pct) / 100,
-                                    ),
-                                )
-                            )
-
-                # ------------------------------------------------
-                # COMBINAÃ‡Ã•ES
-                # ------------------------------------------------
-
-                st.markdown("---")
-
-                st.subheader(
-                    "ðŸ§  CombinaÃ§Ãµes sugeridas"
-                )
-
-                combo1 = res.get(
-                    "combinada_1",
-                    "NÃ£o disponÃ­vel",
-                )
-
-                combo2 = res.get(
-                    "combinada_2",
-                    "NÃ£o disponÃ­vel",
-                )
-
-                pct1 = res.get(
-                    "pct_combinada_1",
-                    0,
-                )
-
-                pct2 = res.get(
-                    "pct_combinada_2",
-                    0,
-                )
-
-                c1, c2 = st.columns(2)
-
-                with c1:
-                    st.markdown(
-                        f"""
-                        <div class="market-card">
-                            <h4>ðŸ”¥ Combo 1</h4>
-                            <div class="best-market">
-                                {combo1}
-                            </div>
-                            <p>
-                                ConfianÃ§a estimada:
-                                <b>{pct1}%</b>
-                            </p>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-
-                with c2:
-                    st.markdown(
-                        f"""
-                        <div class="market-card">
-                            <h4>ðŸ›¡ï¸ Combo 2</h4>
-                            <div class="best-market">
-                                {combo2}
-                            </div>
-                            <p>
-                                ConfianÃ§a estimada:
-                                <b>{pct2}%</b>
-                            </p>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-
-                # ------------------------------------------------
-                # ESTATÃSTICAS BASE
-                # ------------------------------------------------
-
-                stats = res.get(
-                    "estatisticas",
-                    {},
-                )
-
-                if stats:
-
-                    st.markdown("---")
-
-                    st.subheader(
-                        "ðŸ“ˆ Dados utilizados pelo modelo"
-                    )
-
-                    s1, s2, s3, s4 = st.columns(4)
-
-                    s1.metric(
-                        "Golos casa",
-                        stats.get(
-                            "media_golos_casa",
-                            "-",
-                        ),
-                    )
-
-                    s2.metric(
-                        "Golos sofridos casa",
-                        stats.get(
-                            "media_golos_sofridos_casa",
-                            "-",
-                        ),
-                    )
-
-                    s3.metric(
-                        "Golos fora",
-                        stats.get(
-                            "media_golos_fora",
-                            "-",
-                        ),
-                    )
-
-                    s4.metric(
-                        "Golos sofridos fora",
-                        stats.get(
-                            "media_golos_sofridos_fora",
-                            "-",
-                        ),
-                    )
-
-                    p1, p2, p3 = st.columns(3)
-
-                    p1.metric(
-                        "PosiÃ§Ã£o casa",
-                        stats.get(
-                            "posicao_casa",
-                            "-",
-                        ),
-                    )
-
-                    p2.metric(
-                        "PosiÃ§Ã£o fora",
-                        stats.get(
-                            "posicao_fora",
-                            "-",
-                        ),
-                    )
-
-                    p3.metric(
-                        "Golos esperados",
-                        stats.get(
-                            "golos_esperados",
-                            "-",
-                        ),
-                    )
-
-
-# ============================================================
-# ABA 3 â€” DESEMPENHO
-# ============================================================
-
-elif aba_selecionada == "ðŸ“ˆ Desempenho":
-
-    st.markdown(
-        '<div class="main-title">ðŸ“ˆ Desempenho do Bot</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        '<div class="subtitle">'
-        "HistÃ³rico dos palpites registrados nesta sessÃ£o."
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    try:
-        stats = (
-            st.session_state.auditoria
-            .obter_estatisticas_gerais()
-        )
-    except Exception:
-        stats = {
-            "win_rate": 0,
-            "greens": 0,
-            "reds": 0,
-            "pendentes": 0,
+        headers = {
+            "X-Auth-Token": self.token,
+            "Accept": "application/json"
         }
 
-    m1, m2, m3, m4 = st.columns(4)
 
-    m1.metric(
-        "ðŸŽ¯ Taxa de acerto",
-        f"{stats.get('win_rate', 0)}%",
-    )
+        try:
 
-    m2.metric(
-        "ðŸŸ¢ Greens",
-        stats.get("greens", 0),
-    )
-
-    m3.metric(
-        "ðŸ”´ Reds",
-        stats.get("reds", 0),
-    )
-
-    m4.metric(
-        "â³ Pendentes",
-        stats.get("pendentes", 0),
-    )
-
-    st.markdown("---")
-
-    st.subheader(
-        "ðŸ“‹ HistÃ³rico"
-    )
-
-    historico = getattr(
-        st.session_state.auditoria,
-        "historico",
-        [],
-    )
-
-    if not historico:
-
-        st.info(
-            "Nenhum palpite foi registrado nesta sessÃ£o."
-        )
-
-    else:
-
-        df = pd.DataFrame(historico)
-
-        # MantÃ©m compatibilidade caso a auditoria
-        # tenha colunas diferentes.
-        nomes_colunas = [
-            "ID",
-            "Data Registro",
-            "Equipa Casa",
-            "Equipa Fora",
-            "Mercado Sugerido",
-            "ConfianÃ§a IA",
-            "MÃºltipla Sugerida",
-            "Resultado ValidaÃ§Ã£o",
-            "Placar Final",
-        ]
-
-        if len(df.columns) == len(nomes_colunas):
-            df.columns = nomes_colunas
-
-        if "ID" in df.columns:
-            df = df.sort_values(
-                by="ID",
-                ascending=False,
+            resposta = requests.get(
+                BASE_URL + endpoint,
+                headers=headers,
+                params=params or {},
+                timeout=25
             )
 
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
+
+            if resposta.status_code == 200:
+
+                self.last_error = ""
+
+                return resposta.json()
+
+
+            if resposta.status_code == 400:
+
+                self.last_error = (
+                    "Pedido inválido enviado à "
+                    "Football-Data.org."
+                )
+
+
+            elif resposta.status_code == 403:
+
+                self.last_error = (
+                    "A Football-Data.org recusou o acesso. "
+                    "Verifica a API Key e o plano."
+                )
+
+
+            elif resposta.status_code == 404:
+
+                self.last_error = (
+                    "Recurso não encontrado ou indisponível "
+                    "para esta competição."
+                )
+
+
+            elif resposta.status_code == 429:
+
+                self.last_error = (
+                    "Limite de requisições atingido. "
+                    "Aguarda antes de tentar novamente."
+                )
+
+
+            else:
+
+                self.last_error = (
+                    f"Erro HTTP {resposta.status_code} "
+                    "da Football-Data.org."
+                )
+
+
+            return None
+
+
+        except requests.RequestException as erro:
+
+            self.last_error = (
+                f"Erro de conexão com a API: {erro}"
+            )
+
+            return None
+
+
+    # ========================================================
+    # TESTE DA API
+    # ========================================================
+
+    def testar_api(self) -> bool:
+
+        dados = self.request_api(
+            f"/competitions/{self.competition}"
+        )
+
+        return dados is not None
+
+
+    # ========================================================
+    # JOGOS POR DATA
+    # ========================================================
+
+    def get_scheduled_events(
+        self,
+        date_str: str
+    ) -> List[Dict[str, Any]]:
+
+        parametros = {
+            "dateFrom": date_str,
+            "dateTo": date_str
+        }
+
+
+        if self.season:
+
+            parametros["season"] = self.season
+
+
+        dados = self.request_api(
+            f"/competitions/{self.competition}/matches",
+            params=parametros
+        )
+
+
+        if not dados:
+
+            self.last_events = []
+
+            return []
+
+
+        partidas = dados.get(
+            "matches",
+            []
+        )
+
+
+        eventos = []
+
+
+        for partida in partidas:
+
+            home = partida.get(
+                "homeTeam",
+                {}
+            ) or {}
+
+
+            away = partida.get(
+                "awayTeam",
+                {}
+            ) or {}
+
+
+            score = partida.get(
+                "score",
+                {}
+            ) or {}
+
+
+            full_time = score.get(
+                "fullTime",
+                {}
+            ) or {}
+
+
+            home_score = full_time.get(
+                "home"
+            )
+
+
+            away_score = full_time.get(
+                "away"
+            )
+
+
+            status = partida.get(
+                "status",
+                "SCHEDULED"
+            )
+
+
+            eventos.append({
+
+                "event_id":
+                    partida.get("id"),
+
+                "home_team":
+                    home.get("name", "?"),
+
+                "away_team":
+                    away.get("name", "?"),
+
+                "home_team_id":
+                    home.get("id"),
+
+                "away_team_id":
+                    away.get("id"),
+
+                "tournament":
+                    (
+                        partida.get(
+                            "competition",
+                            {}
+                        ) or {}
+                    ).get(
+                        "name",
+                        self.league_name
+                    ),
+
+                "season":
+                    (
+                        partida.get(
+                            "season",
+                            {}
+                        ) or {}
+                    ).get(
+                        "startDate",
+                        ""
+                    ),
+
+                "start_time":
+                    partida.get(
+                        "utcDate",
+                        ""
+                    ),
+
+                "status":
+                    self.traduzir_status(
+                        status
+                    ),
+
+                "status_short":
+                    status,
+
+                "venue":
+                    partida.get(
+                        "venue",
+                        ""
+                    ) or "",
+
+                "referee":
+                    self.obter_arbitro(
+                        partida
+                    ),
+
+                "home_score":
+                    home_score,
+
+                "away_score":
+                    away_score,
+
+                "raw":
+                    partida
+            })
+
+
+        self.last_events = eventos
+
+        return eventos
+
+
+    # ========================================================
+    # STATUS
+    # ========================================================
+
+    @staticmethod
+    def traduzir_status(
+        status: str
+    ) -> str:
+
+        estados = {
+
+            "SCHEDULED":
+                "Agendado",
+
+            "TIMED":
+                "Agendado",
+
+            "IN_PLAY":
+                "Em andamento",
+
+            "PAUSED":
+                "Intervalo",
+
+            "FINISHED":
+                "Terminado",
+
+            "POSTPONED":
+                "Adiado",
+
+            "SUSPENDED":
+                "Suspenso",
+
+            "CANCELLED":
+                "Cancelado"
+        }
+
+        return estados.get(
+            status,
+            status
+        )
+
+
+    # ========================================================
+    # ÁRBITRO
+    # ========================================================
+
+    @staticmethod
+    def obter_arbitro(
+        partida: Dict[str, Any]
+    ) -> str:
+
+        arbitros = partida.get(
+            "referees",
+            []
+        ) or []
+
+
+        if not arbitros:
+            return ""
+
+
+        return arbitros[0].get(
+            "name",
+            ""
+        )
+
+
+    # ========================================================
+    # EQUIPAS
+    # ========================================================
+
+    def obter_todas_equipas(
+        self
+    ) -> List[str]:
+
+        parametros = {}
+
+        if self.season:
+            parametros["season"] = self.season
+
+
+        dados = self.request_api(
+            f"/competitions/{self.competition}/teams",
+            params=parametros
+        )
+
+
+        if not dados:
+            return []
+
+
+        equipas = []
+
+
+        for equipa in dados.get(
+            "teams",
+            []
+        ):
+
+            nome = equipa.get(
+                "name"
+            )
+
+            if nome:
+                equipas.append(nome)
+
+
+        return sorted(equipas)
+
+
+    # ========================================================
+    # ID DA EQUIPA
+    # ========================================================
+
+    def obter_id_equipa(
+        self,
+        nome: str
+    ) -> Optional[int]:
+
+        alvo = nome.strip().lower()
+
+        parametros = {}
+
+        if self.season:
+            parametros["season"] = self.season
+
+
+        dados = self.request_api(
+            f"/competitions/{self.competition}/teams",
+            params=parametros
+        )
+
+
+        if not dados:
+            return None
+
+
+        equipas = dados.get(
+            "teams",
+            []
+        )
+
+
+        # Correspondência exata
+        for equipa in equipas:
+
+            nome_api = str(
+                equipa.get("name", "")
+            ).strip().lower()
+
+
+            short_name = str(
+                equipa.get("shortName", "")
+            ).strip().lower()
+
+
+            if alvo == nome_api or alvo == short_name:
+
+                return equipa.get("id")
+
+
+        # Correspondência parcial
+        for equipa in equipas:
+
+            nome_api = str(
+                equipa.get("name", "")
+            ).strip().lower()
+
+
+            if (
+                alvo in nome_api
+                or nome_api in alvo
+            ):
+
+                return equipa.get("id")
+
+
+        return None
+
+
+    # ========================================================
+    # JOGOS DA EQUIPA
+    # ========================================================
+
+    def obter_jogos_equipa(
+        self,
+        team_id: int,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+
+        parametros = {
+            "status": "FINISHED",
+            "limit": limit,
+            "competitions": self.competition
+        }
+
+
+        if self.season:
+            parametros["season"] = self.season
+
+
+        dados = self.request_api(
+            f"/teams/{team_id}/matches",
+            params=parametros
+        )
+
+
+        if not dados:
+            return []
+
+
+        return dados.get(
+            "matches",
+            []
+        )
+
+
+    # ========================================================
+    # ESTATÍSTICAS DA EQUIPA
+    # ========================================================
+
+    def get_team_stats_for_ai(
+        self,
+        equipa_nome: str
+    ) -> Dict[str, Any]:
+
+        team_id = self.obter_id_equipa(
+            equipa_nome
+        )
+
+
+        if not team_id:
+
+            return {
+                "team_name": equipa_nome,
+                "jogos_analisados": 0,
+                "erro":
+                    "Equipa não encontrada."
+            }
+
+
+        jogos = self.obter_jogos_equipa(
+            team_id,
+            limit=10
+        )
+
+
+        if not jogos:
+
+            return {
+                "team_name": equipa_nome,
+                "jogos_analisados": 0,
+                "erro":
+                    "Não existem jogos suficientes."
+            }
+
+
+        dados = []
+
+
+        for jogo in jogos:
+
+            score = jogo.get(
+                "score",
+                {}
+            ) or {}
+
+
+            full_time = score.get(
+                "fullTime",
+                {}
+            ) or {}
+
+
+            gols_casa = full_time.get(
+                "home"
+            )
+
+
+            gols_fora = full_time.get(
+                "away"
+            )
+
+
+            if (
+                gols_casa is None
+                or gols_fora is None
+            ):
+                continue
+
+
+            home_team = (
+                jogo.get(
+                    "homeTeam",
+                    {}
+                ) or {}
+            ).get(
+                "name",
+                ""
+            )
+
+
+            is_home = (
+                home_team.lower()
+                == equipa_nome.lower()
+            )
+
+
+            if is_home:
+
+                gols_marcados = gols_casa
+                gols_sofridos = gols_fora
+
+            else:
+
+                gols_marcados = gols_fora
+                gols_sofridos = gols_casa
+
+
+            total = (
+                gols_casa
+                + gols_fora
+            )
+
+
+            dados.append({
+
+                "marcados":
+                    float(gols_marcados),
+
+                "sofridos":
+                    float(gols_sofridos),
+
+                "total":
+                    float(total)
+            })
+
+
+        if not dados:
+
+            return {
+                "team_name": equipa_nome,
+                "jogos_analisados": 0
+            }
+
+
+        quantidade = len(dados)
+
+
+        media_marcados = (
+            sum(
+                x["marcados"]
+                for x in dados
+            )
+            / quantidade
+        )
+
+
+        media_sofridos = (
+            sum(
+                x["sofridos"]
+                for x in dados
+            )
+            / quantidade
+        )
+
+
+        over15 = sum(
+            x["total"] >= 2
+            for x in dados
+        )
+
+
+        over25 = sum(
+            x["total"] >= 3
+            for x in dados
+        )
+
+
+        btts = sum(
+            x["marcados"] > 0
+            and x["sofridos"] > 0
+            for x in dados
+        )
+
+
+        vitorias = sum(
+            x["marcados"]
+            > x["sofridos"]
+            for x in dados
+        )
+
+
+        empates = sum(
+            x["marcados"]
+            == x["sofridos"]
+            for x in dados
+        )
+
+
+        derrotas = sum(
+            x["marcados"]
+            < x["sofridos"]
+            for x in dados
+        )
+
+
+        return {
+
+            "team_name":
+                equipa_nome,
+
+            "jogos_analisados":
+                quantidade,
+
+            "media_golos_marcados":
+                round(
+                    media_marcados,
+                    2
+                ),
+
+            "media_golos_sofridos":
+                round(
+                    media_sofridos,
+                    2
+                ),
+
+            "over_1_5_pct":
+                round(
+                    over15
+                    / quantidade
+                    * 100,
+                    1
+                ),
+
+            "over_2_5_pct":
+                round(
+                    over25
+                    / quantidade
+                    * 100,
+                    1
+                ),
+
+            "btts_pct":
+                round(
+                    btts
+                    / quantidade
+                    * 100,
+                    1
+                ),
+
+            "vitorias_pct":
+                round(
+                    vitorias
+                    / quantidade
+                    * 100,
+                    1
+                ),
+
+            "empates_pct":
+                round(
+                    empates
+                    / quantidade
+                    * 100,
+                    1
+                ),
+
+            "derrotas_pct":
+                round(
+                    derrotas
+                    / quantidade
+                    * 100,
+                    1
+                )
+        }
+
+
+    # ========================================================
+    # H2H
+    # ========================================================
+
+    def pesquisar_jogo(
+        self,
+        equipa_casa: str,
+        equipa_fora: str
+    ) -> List[Dict[str, Any]]:
+
+        id_casa = self.obter_id_equipa(
+            equipa_casa
+        )
+
+
+        if not id_casa:
+            return []
+
+
+        jogos = self.obter_jogos_equipa(
+            id_casa,
+            limit=100
+        )
+
+
+        resultados = []
+
+
+        alvo = equipa_fora.lower()
+
+
+        for jogo in jogos:
+
+            home = (
+                jogo.get(
+                    "homeTeam",
+                    {}
+                ) or {}
+            )
+
+
+            away = (
+                jogo.get(
+                    "awayTeam",
+                    {}
+                ) or {}
+            )
+
+
+            nome_home = home.get(
+                "name",
+                ""
+            )
+
+
+            nome_away = away.get(
+                "name",
+                ""
+            )
+
+
+            if (
+                alvo not in nome_home.lower()
+                and alvo not in nome_away.lower()
+            ):
+                continue
+
+
+            score = jogo.get(
+                "score",
+                {}
+            ) or {}
+
+
+            full_time = score.get(
+                "fullTime",
+                {}
+            ) or {}
+
+
+            gols_home = full_time.get(
+                "home"
+            )
+
+
+            gols_away = full_time.get(
+                "away"
+            )
+
+
+            resultados.append({
+
+                "date":
+                    jogo.get(
+                        "utcDate",
+                        ""
+                    ),
+
+                "home_team":
+                    nome_home,
+
+                "away_team":
+                    nome_away,
+
+                "score":
+                    f"{gols_home if gols_home is not None else '?'}"
+                    f"-"
+                    f"{gols_away if gols_away is not None else '?'}",
+
+                "home_score":
+                    gols_home,
+
+                "away_score":
+                    gols_away,
+
+                "status":
+                    jogo.get(
+                        "status",
+                        ""
+                    )
+            })
+
+
+        return resultados
+
+
+    # ========================================================
+    # ANÁLISE COMPLETA
+    # ========================================================
+
+    def analisar_confronto_completo(
+        self,
+        equipa_casa: str,
+        equipa_fora: str
+    ) -> Dict[str, Any]:
+
+        casa = self.get_team_stats_for_ai(
+            equipa_casa
+        )
+
+
+        fora = self.get_team_stats_for_ai(
+            equipa_fora
+        )
+
+
+        over15_casa = float(
+            casa.get(
+                "over_1_5_pct",
+                0
+            )
+        )
+
+
+        over15_fora = float(
+            fora.get(
+                "over_1_5_pct",
+                0
+            )
+        )
+
+
+        over25_casa = float(
+            casa.get(
+                "over_2_5_pct",
+                0
+            )
+        )
+
+
+        over25_fora = float(
+            fora.get(
+                "over_2_5_pct",
+                0
+            )
+        )
+
+
+        btts_casa = float(
+            casa.get(
+                "btts_pct",
+                0
+            )
+        )
+
+
+        btts_fora = float(
+            fora.get(
+                "btts_pct",
+                0
+            )
+        )
+
+
+        win_casa = float(
+            casa.get(
+                "vitorias_pct",
+                0
+            )
+        )
+
+
+        win_fora = float(
+            fora.get(
+                "vitorias_pct",
+                0
+            )
+        )
+
+
+        draw_casa = float(
+            casa.get(
+                "empates_pct",
+                0
+            )
+        )
+
+
+        draw_fora = float(
+            fora.get(
+                "empates_pct",
+                0
+            )
+        )
+
+
+        loss_casa = float(
+            casa.get(
+                "derrotas_pct",
+                0
+            )
+        )
+
+
+        loss_fora = float(
+            fora.get(
+                "derrotas_pct",
+                0
+            )
+        )
+
+
+        over15 = (
+            over15_casa * 0.5
+            + over15_fora * 0.5
+        )
+
+
+        over25 = (
+            over25_casa * 0.5
+            + over25_fora * 0.5
+        )
+
+
+        btts = (
+            btts_casa * 0.5
+            + btts_fora * 0.5
+        )
+
+
+        vitoria_casa = (
+            win_casa * 0.65
+            + loss_fora * 0.35
+        )
+
+
+        vitoria_fora = (
+            win_fora * 0.65
+            + loss_casa * 0.35
+        )
+
+
+        empate = (
+            draw_casa * 0.5
+            + draw_fora * 0.5
+        )
+
+
+        casa_ou_empate = min(
+            99,
+            vitoria_casa + empate
+        )
+
+
+        fora_ou_empate = min(
+            99,
+            vitoria_fora + empate
+        )
+
+
+        menos35 = max(
+            1,
+            100 - over25
+        )
+
+
+        mercados = {
+
+            "Mais de 1.5 golos":
+                self.limitar(
+                    over15
+                ),
+
+            "Mais de 2.5 golos":
+                self.limitar(
+                    over25
+                ),
+
+            "Menos de 3.5 golos":
+                self.limitar(
+                    menos35
+                ),
+
+            "Ambas Marcam":
+                self.limitar(
+                    btts
+                ),
+
+            "Casa ou Empate (1X)":
+                self.limitar(
+                    casa_ou_empate
+                ),
+
+            "Fora ou Empate (X2)":
+                self.limitar(
+                    fora_ou_empate
+                ),
+
+            "Vitória Casa":
+                self.limitar(
+                    vitoria_casa
+                ),
+
+            "Vitória Fora":
+                self.limitar(
+                    vitoria_fora
+                ),
+
+            "Empate":
+                self.limitar(
+                    empate
+                )
+        }
+
+
+        # Se não houver dados suficientes,
+        # não apresenta confiança artificialmente alta.
+
+        jogos_casa = casa.get(
+            "jogos_analisados",
+            0
+        )
+
+
+        jogos_fora = fora.get(
+            "jogos_analisados",
+            0
+        )
+
+
+        if (
+            jogos_casa < 3
+            or jogos_fora < 3
+        ):
+
+            mercados = {
+                mercado:
+                    min(valor, 65)
+                for mercado, valor
+                in mercados.items()
+            }
+
+
+        ordenados = sorted(
+            mercados.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+
+        melhor_mercado = ordenados[0][0]
+        melhor_chance = ordenados[0][1]
+
+
+        # Combinações simples.
+        # Não usamos escanteios/cartões porque
+        # esses dados não vêm deste endpoint.
+
+        combinada_1 = (
+            "Mais de 1.5 golos + "
+            + melhor_mercado
+        )
+
+
+        combinada_2 = (
+            "Mais de 1.5 golos + "
+            "Ambas Marcam"
+        )
+
+
+        pct_combinada_1 = self.limitar(
+            min(
+                over15,
+                melhor_chance
+            ) * 0.90
+        )
+
+
+        pct_combinada_2 = self.limitar(
+            min(
+                over15,
+                btts
+            ) * 0.85
+        )
+
+
+        media_golos_casa = float(
+            casa.get(
+                "media_golos_marcados",
+                0
+            )
+        )
+
+
+        media_golos_fora = float(
+            fora.get(
+                "media_golos_marcados",
+                0
+            )
+        )
+
+
+        media_sofridos_casa = float(
+            casa.get(
+                "media_golos_sofridos",
+                0
+            )
+        )
+
+
+        media_sofridos_fora = float(
+            fora.get(
+                "media_golos_sofridos",
+                0
+            )
+        )
+
+
+        return {
+
+            "melhor_mercado":
+                melhor_mercado,
+
+            "melhor_chance":
+                melhor_chance,
+
+            "mercados":
+                mercados,
+
+            "combinada_1":
+                combinada_1,
+
+            "pct_combinada_1":
+                pct_combinada_1,
+
+            "combinada_2":
+                combinada_2,
+
+            "pct_combinada_2":
+                pct_combinada_2,
+
+            "estatisticas": {
+
+                "media_golos_casa":
+                    round(
+                        media_golos_casa,
+                        2
+                    ),
+
+                "media_golos_sofridos_casa":
+                    round(
+                        media_sofridos_casa,
+                        2
+                    ),
+
+                "media_golos_fora":
+                    round(
+                        media_golos_fora,
+                        2
+                    ),
+
+                "media_golos_sofridos_fora":
+                    round(
+                        media_sofridos_fora,
+                        2
+                    ),
+
+                "jogos_casa":
+                    jogos_casa,
+
+                "jogos_fora":
+                    jogos_fora
+            }
+        }
+
+
+    # ========================================================
+    # LIMITAR PERCENTAGEM
+    # ========================================================
+
+    @staticmethod
+    def limitar(
+        valor: float
+    ) -> int:
+
+        return int(
+            max(
+                1,
+                min(
+                    99,
+                    round(valor)
+                )
+            )
         )
 
 
 # ============================================================
-# RODAPÃ‰
+# COMPATIBILIDADE COM O APP.PY
 # ============================================================
 
-st.markdown("---")
-
-st.caption(
-    "FootballAI Predictor Pro â€¢ "
-    "AnÃ¡lise prÃ©-jogo baseada nos dados disponÃ­veis da API. "
-    "As probabilidades sÃ£o estimativas do modelo e nÃ£o garantem resultados."
-)
+FootballAIEngine = SoccerDataScraper
