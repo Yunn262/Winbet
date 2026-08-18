@@ -1,0 +1,6 @@
+streamlit
+soccerdata
+pandas
+numpy
+scipy
+openpyxl
