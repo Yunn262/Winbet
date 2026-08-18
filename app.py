@@ -1,53 +1,68 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 from scraper import FootballAIEngine
 from auditoria import AuditoriaPalpites
 
 st.set_page_config(page_title="FootballAI Predictor Pro", page_icon="📊", layout="wide")
 
-if "ai_engine" not in st.session_state:
-    st.session_state.ai_engine = FootballAIEngine()
+# Configuração da Liga na Barra Lateral
+st.sidebar.markdown("## 🛠️ Painel de Controle IA")
+liga_atual = st.sidebar.selectbox("Campeonato Base:", ["Premier League", "Brasileirão Série A", "La Liga"])
+
+# Mantém os motores ativos na sessão do Streamlit
+if "ai_engine" not in st.session_state or st.session_state.get("liga_anterior") != liga_atual:
+    st.session_state.ai_engine = FootballAIEngine(liga_nome=liga_atual)
+    st.session_state.liga_anterior = liga_atual
 if "auditoria" not in st.session_state:
     st.session_state.auditoria = AuditoriaPalpites()
 
-# MENU LATERAL
-st.sidebar.markdown("## 🛠️ Painel de Controle IA")
+# FUNÇÃO COM CACHE CRÍTICA: Protege a sua cota diária de 100 chamadas da API
+@st.cache_data(ttl=3600)
+def carregar_jogos_reais_cached(liga_nome, data_selecionada):
+    engine = FootballAIEngine(liga_nome=liga_nome)
+    return engine.buscar_jogos_reais_api(data_selecionada)
+
 aba_selecionada = st.sidebar.radio(
     "Navegação do Sistema:",
-    ["🗓️ Palpites do Dia (Lote 10+)", "🔎 Pesquisa de Confrontos H2H", "📈 Desempenho e Assertividade"]
+    ["🗓️ Palpites do Dia (Jogos Reais)", "🔎 Pesquisa de Confrontos H2H", "📈 Desempenho e Assertividade"]
 )
 
-st.sidebar.markdown("---")
-liga_atual = st.sidebar.selectbox("Campeonato Base:", ["Premier League", "Brasileirão Série A", "La Liga"])
-if st.sidebar.button("🔄 Sincronizar Banco de Dados"):
-    st.session_state.ai_engine = FootballAIEngine(liga_nome=liga_atual)
-    st.sidebar.success("Base de dados sincronizada!")
-
-# ABA 1: PALPITES DO DIA
-if aba_selecionada == "🗓️ Palpites do Dia (Lote 10+)":
-    st.title("🗓️ Lista Automatizada de Palpites do Dia")
-    st.write("Análise preditiva em lote gerada de forma 100% matemática para as próximas 24 horas.")
+# ABA 1: PALPITES COM JOGOS REAIS DA API-FOOTBALL
+if aba_selecionada == "🗓️ Palpites do Dia (Jogos Reais)":
+    st.title("🗓️ Lista de Palpites com Jogos Reais do Dia")
+    st.write("Dados puxados ao vivo diretamente dos servidores da API-Football.")
+    
+    # Campo de seleção de data para o utilizador buscar qualquer dia
+    data_pesquisa = st.date_input("Escolha a data para buscar jogos:", datetime.now()).strftime("%Y-%m-%d")
+    
+    with st.spinner("Conectando à API-Football e extraindo partidas oficiais..."):
+        lista_jogos = carregar_jogos_reais_cached(liga_atual, data_pesquisa)
+        
     st.markdown("---")
     
-    lista_jogos = st.session_state.ai_engine.obter_jogos_do_dia()
-    
-    cols = st.columns(2)
-    for idx, jogo in enumerate(lista_jogos):
-        with cols[idx % 2]:
-            st.markdown(f"### ⚽ Jogo {idx + 1}: {jogo['home']} vs {jogo['away']}")
-            res = st.session_state.ai_engine.analisar_confronto_completo(jogo['home'], jogo['away'])
-            
-            st.info(f"💡 **Melhor mercado:** {res['melhor_mercado']}  Chance {res['melhor_chance']}%")
-            st.caption(f"⚡ *Múltipla Sugerida:* {res['combinada_1']}")
-            
-            st.session_state.auditoria.registrar_palpite(
-                casa=jogo['home'], fora=jogo['away'], 
-                mercado=res['melhor_mercado'], chance=res['melhor_chance'],
-                combinada=res['combinada_1']
-            )
-            st.markdown("---")
+    if not lista_jogos:
+        st.warning(f"Nenhum jogo oficial encontrado para a liga {liga_atual} na data {data_pesquisa}.")
+        st.info("💡 Dica: Certifique-se de que a sua API Key está configurada nas Secrets do Streamlit.")
+    else:
+        st.success(f"✅ {len(lista_jogos)} Jogos Reais localizados com sucesso!")
+        cols = st.columns(2)
+        for idx, jogo in enumerate(lista_jogos):
+            with cols[idx % 2]:
+                st.markdown(f"### ⚽ Jogo: {jogo['home']} vs {jogo['away']}")
+                res = st.session_state.ai_engine.analisar_confronto_completo(jogo['home'], jogo['away'])
+                
+                st.info(f"💡 **Melhor mercado:** {res['melhor_mercado']} | **Chance:** `{res['melhor_chance']}%`")
+                st.caption(f"⚡ *Múltipla Sugerida:* {res['combinada_1']}")
+                
+                st.session_state.auditoria.registrar_palpite(
+                    casa=jogo['home'], fora=jogo['away'], 
+                    mercado=res['melhor_mercado'], chance=res['melhor_chance'],
+                    combinada=res['combinada_1']
+                )
+                st.markdown("---")
 
-# ABA 2: PESQUISA AVANÇADA
+# ABA 2: PESQUISA AVANÇADA H2H
 elif aba_selecionada == "🔎 Pesquisa de Confrontos H2H":
     st.title("🔎 Painel Avançado de Pesquisa H2H")
     st.markdown("---")
@@ -64,8 +79,6 @@ elif aba_selecionada == "🔎 Pesquisa de Confrontos H2H":
         
         st.markdown("### 🚨 VERDITO FINAL DO MOTOR DE IA")
         st.warning(f"🎯 O melhor mercado será ou é **{res['melhor_mercado']}**  Chance **{res['melhor_chance']}%**")
-        
-        st.session_state.auditoria.registrar_palpite(equipa_casa, equipa_fora, res['melhor_mercado'], res['melhor_chance'], res['combinada_1'])
         st.markdown("---")
         
         col_m1, col_m2 = st.columns(2)
@@ -81,26 +94,8 @@ elif aba_selecionada == "🔎 Pesquisa de Confrontos H2H":
                 if "Escanteios" in mercado or "cartões" in mercado:
                     st.write(f"🚩 {mercado}: **{pct}%**")
                     st.progress(pct / 100)
-                    
-        st.markdown("---")
-        st.subheader("🧠 Sugestões de Bilhetes e Combinações Criativas (IA)")
-        col_c1, col_c2 = st.columns(2)
-        with col_c1:
-            st.markdown(f"""
-            <div style="background-color:#1E293B;padding:15px;border-radius:10px;border-left:5px solid #10B981;">
-                <h4 style="margin:0;color:#10B981;">🔥 Combo Combinada Pro</h4>
-                <p style="margin:5px 0 0 0;font-size:16px;"><b>{res['combinada_1']}</b></p>
-            </div>
-            """, unsafe_allow_html=True)
-        with col_c2:
-            st.markdown(f"""
-            <div style="background-color:#1E293B;padding:15px;border-radius:10px;border-left:5px solid #3B82F6;">
-                <h4 style="margin:0;color:#3B82F6;">🛡️ Combo Chance Dupla Pro</h4>
-                <p style="margin:5px 0 0 0;font-size:16px;"><b>{res['combinada_2']}</b></p>
-            </div>
-            """, unsafe_allow_html=True)
 
-# ABA 3: PERFORMANCES
+# ABA 3: PERFORMANCES (AUDITORIA)
 elif aba_selecionada == "📈 Desempenho e Assertividade":
     st.title("📈 Estatísticas de Assertividade do Bot")
     st.markdown("---")
@@ -114,9 +109,7 @@ elif aba_selecionada == "📈 Desempenho e Assertividade":
     
     st.markdown("---")
     if not st.session_state.auditoria.historico:
-        st.info("Nenhum palpite registrado na base de dados até ao momento.")
+        st.info("Nenhum palpite armazenado na base de dados até ao momento.")
     else:
         df_visual = pd.DataFrame(st.session_state.auditoria.historico)
-        df_visual.columns = ["ID", "Data Registro", "Equipa Casa", "Equipa Fora", "Mercado Sugerido", "Confiança IA", "Múltipla Sugerida", "Resultado Validação", "Placar Final"]
-        st.dataframe(df_visual.sort_values(by="ID", ascending=False), use_container_width=True)
-
+        st.dataframe(df_visual, use_container_width=True)
