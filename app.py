@@ -1,799 +1,797 @@
 import streamlit as st
-import pandas as pd
-from datetime import datetime
-
+from datetime import date
 from scraper import FootballAIEngine
-from auditoria import AuditoriaPalpites
 
 
 # ============================================================
-# CONFIGURAÃ‡ÃƒO
+# CONFIGURAÇÃO
 # ============================================================
 
 st.set_page_config(
-    page_title="FootballAI Predictor Pro",
-    page_icon="ðŸ”®",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    page_title="FootballAI Predictor",
+    page_icon="⚽",
+    layout="wide"
 )
 
-
-# ============================================================
-# ESTILO
-# ============================================================
-
-st.markdown(
-    """
-    <style>
-    .main-title {
-        font-size: 38px;
-        font-weight: 800;
-        margin-bottom: 0;
-    }
-
-    .subtitle {
-        color: #94a3b8;
-        font-size: 16px;
-        margin-bottom: 25px;
-    }
-
-    .match-card {
-        padding: 20px;
-        border-radius: 15px;
-        border: 1px solid rgba(148,163,184,.18);
-        background: rgba(15,23,42,.55);
-        margin-bottom: 15px;
-    }
-
-    .team-name {
-        font-size: 20px;
-        font-weight: 700;
-    }
-
-    .market-card {
-        padding: 18px;
-        border-radius: 12px;
-        border: 1px solid rgba(148,163,184,.18);
-        margin-bottom: 10px;
-    }
-
-    .best-market {
-        font-size: 22px;
-        font-weight: 800;
-    }
-
-    .small-muted {
-        color: #94a3b8;
-        font-size: 13px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-# ============================================================
-# LIGAS
-# ============================================================
 
 LIGAS = [
     "Premier League",
     "La Liga",
-    "Serie A Italiana",
+    "Serie A",
     "Bundesliga",
     "Ligue 1",
-    "Champions League",
+    "Liga Portugal",
+    "Brasileirao Serie A",
+    "Champions League"
 ]
 
 
 # ============================================================
-# SIDEBAR
+# CABEÇALHO
 # ============================================================
 
-st.sidebar.markdown("## ðŸ› ï¸ FootballAI")
+st.title("⚽ FootballAI Predictor")
 
-liga_atual = st.sidebar.selectbox(
-    "Campeonato:",
-    LIGAS,
+st.caption(
+    "Análise de futebol baseada nos dados disponíveis "
+    "na Football-Data.org"
 )
 
-aba_selecionada = st.sidebar.radio(
-    "NavegaÃ§Ã£o:",
+
+# ============================================================
+# MENU
+# ============================================================
+
+pagina = st.sidebar.radio(
+    "Navegação",
     [
-        "ðŸ—“ï¸ Palpites do Dia",
-        "ðŸ”Ž Pesquisa H2H",
-        "ðŸ“ˆ Desempenho",
-    ],
+        "🔥 Palpite Diário",
+        "🔎 Análise H2H"
+    ]
 )
 
-st.sidebar.markdown("---")
-
-if st.sidebar.button(
-    "ðŸ”„ Sincronizar dados",
-    use_container_width=True,
-):
-    st.cache_data.clear()
-    st.sidebar.success("Cache limpo. PrÃ³xima consulta serÃ¡ atualizada.")
-
 
 # ============================================================
-# SESSION STATE
+# FUNÇÃO AUXILIAR
 # ============================================================
 
-if (
-    "ai_engine" not in st.session_state
-    or st.session_state.get("liga_anterior") != liga_atual
-):
-    st.session_state.ai_engine = FootballAIEngine(
-        liga_nome=liga_atual
-    )
-    st.session_state.liga_anterior = liga_atual
+def criar_motor(liga):
 
-if "auditoria" not in st.session_state:
-    st.session_state.auditoria = AuditoriaPalpites()
-
-
-# ============================================================
-# CACHE DOS JOGOS
-# ============================================================
-
-@st.cache_data(ttl=600)
-def carregar_jogos_reais_cached(
-    liga_nome: str,
-    data_selecionada: str,
-):
-    engine = FootballAIEngine(liga_nome=liga_nome)
-
-    return engine.buscar_jogos_reais_api(
-        data_selecionada
+    return FootballAIEngine(
+        league_name=liga
     )
 
 
 # ============================================================
-# FUNÃ‡ÃƒO DE ANÃLISE SEGURA
+# PALPITE DIÁRIO
 # ============================================================
 
-def analisar_jogo(casa, fora):
-    try:
-        resultado = st.session_state.ai_engine.analisar_confronto_completo(
-            casa,
-            fora,
-        )
+if pagina == "🔥 Palpite Diário":
 
-        if not isinstance(resultado, dict):
-            return None
+    st.header("🔥 Palpite Diário")
 
-        return resultado
-
-    except Exception as exc:
-        st.error(
-            f"NÃ£o foi possÃ­vel analisar {casa} vs {fora}: {exc}"
-        )
-        return None
-
-
-# ============================================================
-# ABA 1 â€” PALPITES DO DIA
-# ============================================================
-
-if aba_selecionada == "ðŸ—“ï¸ Palpites do Dia":
-
-    st.markdown(
-        '<div class="main-title">ðŸ”® FootballAI Predictor Pro</div>',
-        unsafe_allow_html=True,
+    st.write(
+        "O sistema procura automaticamente os jogos disponíveis "
+        "nas principais competições e seleciona os melhores mercados."
     )
 
-    st.markdown(
-        '<div class="subtitle">'
-        "AnÃ¡lise prÃ©-jogo baseada nos dados disponÃ­veis da Football-Data.org."
-        "</div>",
-        unsafe_allow_html=True,
+    data_selecionada = st.date_input(
+        "📅 Data dos jogos",
+        value=date.today()
     )
 
-    col_data, col_info = st.columns([1, 2])
+    data_str = data_selecionada.strftime(
+        "%Y-%m-%d"
+    )
 
-    with col_data:
-        data_escolhida = st.date_input(
-            "ðŸ“… Data dos jogos:",
-            value=datetime.now().date(),
-        )
 
-    data_pesquisa = data_escolhida.strftime("%Y-%m-%d")
-
-    with col_info:
-        st.info(
-            f"ðŸ† Campeonato selecionado: **{liga_atual}**"
-        )
-
-    st.markdown("---")
-
-    with st.spinner(
-        "âš½ Procurando jogos oficiais..."
+    if st.button(
+        "🚀 GERAR PALPITE DO DIA",
+        use_container_width=True
     ):
-        lista_jogos = carregar_jogos_reais_cached(
-            liga_atual,
-            data_pesquisa,
+
+        todos_jogos = []
+
+        progresso = st.progress(
+            0,
+            text="A procurar jogos..."
         )
 
-    if not lista_jogos:
 
-        st.warning(
-            f"NÃ£o foram encontrados jogos da **{liga_atual}** "
-            f"para **{data_pesquisa}**."
+        for numero, liga in enumerate(LIGAS):
+
+            try:
+
+                motor = criar_motor(
+                    liga
+                )
+
+                jogos = motor.get_scheduled_events(
+                    data_str
+                )
+
+
+                for jogo in jogos:
+
+                    jogo["_liga"] = liga
+
+                    todos_jogos.append(
+                        jogo
+                    )
+
+
+            except Exception:
+                pass
+
+
+            progresso.progress(
+                int(
+                    ((numero + 1) / len(LIGAS))
+                    * 100
+                ),
+                text=f"A verificar {liga}..."
+            )
+
+
+        progresso.empty()
+
+
+        # ----------------------------------------------------
+        # REMOVER DUPLICADOS
+        # ----------------------------------------------------
+
+        unicos = {}
+
+        for jogo in todos_jogos:
+
+            chave = (
+                jogo.get("home_team", ""),
+                jogo.get("away_team", "")
+            )
+
+            unicos[chave] = jogo
+
+
+        todos_jogos = list(
+            unicos.values()
         )
 
-        st.caption(
-            "Verifique a data, a competiÃ§Ã£o e a chave "
-            "FOOTBALL_DATA_ORG_KEY nas Secrets do Streamlit."
-        )
 
-    else:
+        if not todos_jogos:
+
+            st.warning(
+                "Nenhum jogo foi encontrado para esta data."
+            )
+
+            st.stop()
+
+
+        # ----------------------------------------------------
+        # QUANTIDADE DO BILHETE
+        # ----------------------------------------------------
+
+        if len(todos_jogos) >= 10:
+
+            quantidade = 10
+
+        elif len(todos_jogos) >= 6:
+
+            quantidade = 6
+
+        elif len(todos_jogos) >= 5:
+
+            quantidade = 5
+
+        else:
+
+            st.warning(
+                f"Foram encontrados apenas "
+                f"{len(todos_jogos)} jogos."
+            )
+
+            st.info(
+                "São necessários pelo menos 5 jogos "
+                "para montar o Palpite Diário."
+            )
+
+            st.stop()
+
 
         st.success(
-            f"âœ… {len(lista_jogos)} jogo(s) encontrado(s)."
+            f"⚽ {len(todos_jogos)} jogos encontrados. "
+            f"O bilhete terá {quantidade} seleções."
         )
 
+
         # ----------------------------------------------------
-        # FILTRO OPCIONAL
+        # ANÁLISE DOS JOGOS
         # ----------------------------------------------------
 
-        mostrar_jogos = st.slider(
-            "Quantidade de jogos para analisar:",
-            min_value=1,
-            max_value=len(lista_jogos),
-            value=min(10, len(lista_jogos)),
+        resultados = []
+
+        barra = st.progress(
+            0,
+            text="A analisar os jogos..."
         )
 
-        jogos_exibidos = lista_jogos[:mostrar_jogos]
 
-        # ----------------------------------------------------
-        # CARDS
-        # ----------------------------------------------------
-
-        for idx, jogo in enumerate(jogos_exibidos):
-
-            casa = jogo.get("home", "?")
-            fora = jogo.get("away", "?")
-
-            st.markdown(
-                '<div class="match-card">',
-                unsafe_allow_html=True,
+        jogos_para_analisar = todos_jogos[
+            :min(
+                len(todos_jogos),
+                20
             )
+        ]
 
-            col_jogo, col_status = st.columns([4, 1])
 
-            with col_jogo:
-                st.markdown(
-                    f'<div class="team-name">'
-                    f'âš½ {casa} vs {fora}'
-                    f'</div>',
-                    unsafe_allow_html=True,
+        for numero, jogo in enumerate(
+            jogos_para_analisar
+        ):
+
+            try:
+
+                liga = jogo["_liga"]
+
+                motor = criar_motor(
+                    liga
                 )
 
-            with col_status:
-                st.caption(
-                    jogo.get("status", "SCHEDULED")
+
+                analise = motor.analisar_confronto_completo(
+                    jogo["home_team"],
+                    jogo["away_team"]
                 )
 
-            data_jogo = jogo.get("date", "")
 
-            if data_jogo:
-                try:
-                    dt = datetime.fromisoformat(
-                        data_jogo.replace("Z", "+00:00")
-                    )
-                    st.caption(
-                        f"ðŸ• {dt.strftime('%d/%m/%Y %H:%M')}"
-                    )
-                except Exception:
-                    pass
+                resultados.append({
 
-            res = analisar_jogo(casa, fora)
+                    "jogo": jogo,
 
-            if res:
+                    "mercado":
+                        analise.get(
+                            "melhor_mercado",
+                            "Mais de 1.5 golos"
+                        ),
 
-                st.markdown("---")
+                    "chance":
+                        float(
+                            analise.get(
+                                "melhor_chance",
+                                0
+                            )
+                        )
 
-                melhor = res.get(
-                    "melhor_mercado",
-                    "Sem mercado",
+                })
+
+
+            except Exception:
+
+                pass
+
+
+            barra.progress(
+                int(
+                    ((numero + 1)
+                    / len(jogos_para_analisar))
+                    * 100
+                ),
+                text=(
+                    f"A analisar "
+                    f"{numero + 1}/"
+                    f"{len(jogos_para_analisar)}"
                 )
-
-                chance = res.get(
-                    "melhor_chance",
-                    0,
-                )
-
-                st.info(
-                    f"ðŸŽ¯ **Melhor mercado:** "
-                    f"**{melhor}**  \n"
-                    f"ðŸ“Š **ConfianÃ§a do modelo:** `{chance}%`"
-                )
-
-                combinada_1 = res.get(
-                    "combinada_1",
-                    "",
-                )
-
-                pct_1 = res.get(
-                    "pct_combinada_1",
-                    0,
-                )
-
-                combinada_2 = res.get(
-                    "combinada_2",
-                    "",
-                )
-
-                pct_2 = res.get(
-                    "pct_combinada_2",
-                    0,
-                )
-
-                c1, c2 = st.columns(2)
-
-                with c1:
-                    st.markdown(
-                        f"ðŸ”¥ **Combo 1**  \n"
-                        f"{combinada_1}  \n"
-                        f"ConfianÃ§a estimada: **{pct_1}%**"
-                    )
-
-                with c2:
-                    st.markdown(
-                        f"ðŸ›¡ï¸ **Combo 2**  \n"
-                        f"{combinada_2}  \n"
-                        f"ConfianÃ§a estimada: **{pct_2}%**"
-                    )
-
-                # Auditoria
-                try:
-                    st.session_state.auditoria.registrar_palpite(
-                        casa=casa,
-                        fora=fora,
-                        mercado=melhor,
-                        chance=chance,
-                        combinada=combinada_1,
-                    )
-                except Exception:
-                    pass
-
-            st.markdown(
-                "</div>",
-                unsafe_allow_html=True,
             )
 
 
-# ============================================================
-# ABA 2 â€” H2H
-# ============================================================
+        barra.empty()
 
-elif aba_selecionada == "ðŸ”Ž Pesquisa H2H":
 
-    st.markdown(
-        '<div class="main-title">ðŸ”Ž AnÃ¡lise H2H</div>',
-        unsafe_allow_html=True,
-    )
+        if not resultados:
 
-    st.markdown(
-        '<div class="subtitle">'
-        "Compare duas equipas e veja os mercados calculados pelo modelo."
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    with st.spinner("Carregando equipas..."):
-        try:
-            lista_equipas = (
-                st.session_state.ai_engine.obter_todas_equipas()
-            )
-        except Exception as exc:
-            lista_equipas = []
             st.error(
-                f"Erro ao carregar equipas: {exc}"
+                "Não foi possível calcular os palpites "
+                "com os dados disponíveis."
             )
 
-    if not lista_equipas:
+            st.stop()
 
-        st.warning(
-            "NÃ£o foi possÃ­vel carregar as equipas desta competiÃ§Ã£o."
+
+        # ----------------------------------------------------
+        # ORDENAR POR CONFIANÇA
+        # ----------------------------------------------------
+
+        resultados = sorted(
+            resultados,
+            key=lambda x: x["chance"],
+            reverse=True
         )
 
-        st.info(
-            "Verifique a chave da Football-Data.org e se "
-            "a competiÃ§Ã£o estÃ¡ disponÃ­vel no teu plano."
-        )
 
-    else:
+        selecionados = resultados[
+            :quantidade
+        ]
 
-        c1, c2 = st.columns(2)
 
-        with c1:
-            equipa_casa = st.selectbox(
-                "ðŸ  Equipa da Casa:",
-                lista_equipas,
-                index=0,
-            )
-
-        with c2:
-            index_fora = (
-                1 if len(lista_equipas) > 1 else 0
-            )
-
-            equipa_fora = st.selectbox(
-                "âœˆï¸ Equipa de Fora:",
-                lista_equipas,
-                index=index_fora,
-            )
+        # ----------------------------------------------------
+        # BILHETE FINAL
+        # ----------------------------------------------------
 
         st.markdown("---")
 
-        if st.button(
-            "ðŸ¤– ANALISAR CONFRONTO",
-            use_container_width=True,
-            type="primary",
+        st.subheader(
+            "🎟️ BILHETE DO DIA"
+        )
+
+
+        soma = 0
+
+
+        for numero, item in enumerate(
+            selecionados,
+            start=1
         ):
 
-            with st.spinner(
-                "Analisando forma, golos e classificaÃ§Ã£o..."
-            ):
-                res = analisar_jogo(
-                    equipa_casa,
-                    equipa_fora,
-                )
+            jogo = item["jogo"]
 
-            if res:
+            chance = item["chance"]
 
-                melhor = res.get(
-                    "melhor_mercado",
-                    "Sem mercado",
-                )
+            soma += chance
 
-                chance = res.get(
-                    "melhor_chance",
-                    0,
-                )
 
-                st.markdown(
-                    "### ðŸŽ¯ VEREDITO DO MODELO"
-                )
+            st.markdown(
+                f"""
+### {numero}. ⚽ {jogo['home_team']} 🆚 {jogo['away_team']}
 
-                st.success(
-                    f"**{melhor}** â€” confianÃ§a **{chance}%**"
-                )
+**🎯 {item['mercado']}**
 
-                try:
-                    st.session_state.auditoria.registrar_palpite(
-                        casa=equipa_casa,
-                        fora=equipa_fora,
-                        mercado=melhor,
-                        chance=chance,
-                        combinada=res.get(
-                            "combinada_1",
-                            "",
-                        ),
-                    )
-                except Exception:
-                    pass
+📊 Confiança calculada: **{chance:.0f}%**
 
-                st.markdown("---")
-
-                # ------------------------------------------------
-                # MERCADOS
-                # ------------------------------------------------
-
-                st.subheader(
-                    "ðŸ“Š Mercados analisados"
-                )
-
-                mercados = res.get(
-                    "mercados",
-                    {},
-                )
-
-                if mercados:
-
-                    col_m1, col_m2 = st.columns(2)
-
-                    mercados_lista = list(
-                        mercados.items()
-                    )
-
-                    metade = (
-                        len(mercados_lista) + 1
-                    ) // 2
-
-                    with col_m1:
-                        for mercado, pct in mercados_lista[:metade]:
-
-                            st.write(
-                                f"ðŸ”¹ **{mercado}** â€” {pct}%"
-                            )
-
-                            st.progress(
-                                max(
-                                    0.0,
-                                    min(
-                                        1.0,
-                                        float(pct) / 100,
-                                    ),
-                                )
-                            )
-
-                    with col_m2:
-                        for mercado, pct in mercados_lista[metade:]:
-
-                            st.write(
-                                f"ðŸ”¹ **{mercado}** â€” {pct}%"
-                            )
-
-                            st.progress(
-                                max(
-                                    0.0,
-                                    min(
-                                        1.0,
-                                        float(pct) / 100,
-                                    ),
-                                )
-                            )
-
-                # ------------------------------------------------
-                # COMBINAÃ‡Ã•ES
-                # ------------------------------------------------
-
-                st.markdown("---")
-
-                st.subheader(
-                    "ðŸ§  CombinaÃ§Ãµes sugeridas"
-                )
-
-                combo1 = res.get(
-                    "combinada_1",
-                    "NÃ£o disponÃ­vel",
-                )
-
-                combo2 = res.get(
-                    "combinada_2",
-                    "NÃ£o disponÃ­vel",
-                )
-
-                pct1 = res.get(
-                    "pct_combinada_1",
-                    0,
-                )
-
-                pct2 = res.get(
-                    "pct_combinada_2",
-                    0,
-                )
-
-                c1, c2 = st.columns(2)
-
-                with c1:
-                    st.markdown(
-                        f"""
-                        <div class="market-card">
-                            <h4>ðŸ”¥ Combo 1</h4>
-                            <div class="best-market">
-                                {combo1}
-                            </div>
-                            <p>
-                                ConfianÃ§a estimada:
-                                <b>{pct1}%</b>
-                            </p>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-
-                with c2:
-                    st.markdown(
-                        f"""
-                        <div class="market-card">
-                            <h4>ðŸ›¡ï¸ Combo 2</h4>
-                            <div class="best-market">
-                                {combo2}
-                            </div>
-                            <p>
-                                ConfianÃ§a estimada:
-                                <b>{pct2}%</b>
-                            </p>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-
-                # ------------------------------------------------
-                # ESTATÃSTICAS BASE
-                # ------------------------------------------------
-
-                stats = res.get(
-                    "estatisticas",
-                    {},
-                )
-
-                if stats:
-
-                    st.markdown("---")
-
-                    st.subheader(
-                        "ðŸ“ˆ Dados utilizados pelo modelo"
-                    )
-
-                    s1, s2, s3, s4 = st.columns(4)
-
-                    s1.metric(
-                        "Golos casa",
-                        stats.get(
-                            "media_golos_casa",
-                            "-",
-                        ),
-                    )
-
-                    s2.metric(
-                        "Golos sofridos casa",
-                        stats.get(
-                            "media_golos_sofridos_casa",
-                            "-",
-                        ),
-                    )
-
-                    s3.metric(
-                        "Golos fora",
-                        stats.get(
-                            "media_golos_fora",
-                            "-",
-                        ),
-                    )
-
-                    s4.metric(
-                        "Golos sofridos fora",
-                        stats.get(
-                            "media_golos_sofridos_fora",
-                            "-",
-                        ),
-                    )
-
-                    p1, p2, p3 = st.columns(3)
-
-                    p1.metric(
-                        "PosiÃ§Ã£o casa",
-                        stats.get(
-                            "posicao_casa",
-                            "-",
-                        ),
-                    )
-
-                    p2.metric(
-                        "PosiÃ§Ã£o fora",
-                        stats.get(
-                            "posicao_fora",
-                            "-",
-                        ),
-                    )
-
-                    p3.metric(
-                        "Golos esperados",
-                        stats.get(
-                            "golos_esperados",
-                            "-",
-                        ),
-                    )
-
-
-# ============================================================
-# ABA 3 â€” DESEMPENHO
-# ============================================================
-
-elif aba_selecionada == "ðŸ“ˆ Desempenho":
-
-    st.markdown(
-        '<div class="main-title">ðŸ“ˆ Desempenho do Bot</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        '<div class="subtitle">'
-        "HistÃ³rico dos palpites registrados nesta sessÃ£o."
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    try:
-        stats = (
-            st.session_state.auditoria
-            .obter_estatisticas_gerais()
-        )
-    except Exception:
-        stats = {
-            "win_rate": 0,
-            "greens": 0,
-            "reds": 0,
-            "pendentes": 0,
-        }
-
-    m1, m2, m3, m4 = st.columns(4)
-
-    m1.metric(
-        "ðŸŽ¯ Taxa de acerto",
-        f"{stats.get('win_rate', 0)}%",
-    )
-
-    m2.metric(
-        "ðŸŸ¢ Greens",
-        stats.get("greens", 0),
-    )
-
-    m3.metric(
-        "ðŸ”´ Reds",
-        stats.get("reds", 0),
-    )
-
-    m4.metric(
-        "â³ Pendentes",
-        stats.get("pendentes", 0),
-    )
-
-    st.markdown("---")
-
-    st.subheader(
-        "ðŸ“‹ HistÃ³rico"
-    )
-
-    historico = getattr(
-        st.session_state.auditoria,
-        "historico",
-        [],
-    )
-
-    if not historico:
-
-        st.info(
-            "Nenhum palpite foi registrado nesta sessÃ£o."
-        )
-
-    else:
-
-        df = pd.DataFrame(historico)
-
-        # MantÃ©m compatibilidade caso a auditoria
-        # tenha colunas diferentes.
-        nomes_colunas = [
-            "ID",
-            "Data Registro",
-            "Equipa Casa",
-            "Equipa Fora",
-            "Mercado Sugerido",
-            "ConfianÃ§a IA",
-            "MÃºltipla Sugerida",
-            "Resultado ValidaÃ§Ã£o",
-            "Placar Final",
-        ]
-
-        if len(df.columns) == len(nomes_colunas):
-            df.columns = nomes_colunas
-
-        if "ID" in df.columns:
-            df = df.sort_values(
-                by="ID",
-                ascending=False,
+🏆 Competição: **{jogo['_liga']}**
+"""
             )
 
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
+            st.progress(
+                min(
+                    chance / 100,
+                    1.0
+                )
+            )
+
+            st.markdown("---")
+
+
+        # ----------------------------------------------------
+        # RESUMO
+        # ----------------------------------------------------
+
+        confianca_media = (
+            soma / len(selecionados)
+        )
+
+
+        st.subheader(
+            "🧠 Resumo da análise"
+        )
+
+
+        c1, c2, c3 = st.columns(3)
+
+
+        c1.metric(
+            "Jogos no bilhete",
+            len(selecionados)
+        )
+
+
+        c2.metric(
+            "Confiança média",
+            f"{confianca_media:.1f}%"
+        )
+
+
+        if confianca_media >= 80:
+
+            classificacao = "🔥 Muito forte"
+
+        elif confianca_media >= 70:
+
+            classificacao = "🟢 Forte"
+
+        elif confianca_media >= 60:
+
+            classificacao = "🟡 Moderada"
+
+        else:
+
+            classificacao = "⚪ Baixa"
+
+
+        c3.metric(
+            "Classificação",
+            classificacao
+        )
+
+
+        st.info(
+            "💡 Melhor oportunidade do bilhete: "
+            f"**{selecionados[0]['mercado']} — "
+            f"{selecionados[0]['chance']:.0f}%**"
         )
 
 
 # ============================================================
-# RODAPÃ‰
+# H2H
 # ============================================================
 
-st.markdown("---")
+else:
 
-st.caption(
-    "FootballAI Predictor Pro â€¢ "
-    "AnÃ¡lise prÃ©-jogo baseada nos dados disponÃ­veis da API. "
-    "As probabilidades sÃ£o estimativas do modelo e nÃ£o garantem resultados."
-)
+    st.header("🔎 Análise H2H")
+
+    st.write(
+        "Escreva os nomes das duas equipas. "
+        "O sistema procura os confrontos disponíveis "
+        "e calcula as probabilidades dos mercados."
+    )
+
+
+    # --------------------------------------------------------
+    # ESCOLHA DA COMPETIÇÃO
+    # --------------------------------------------------------
+
+    liga_h2h = st.selectbox(
+        "🏆 Competição onde procurar os dados",
+        LIGAS
+    )
+
+
+    col1, col2 = st.columns(2)
+
+
+    with col1:
+
+        equipa1 = st.text_input(
+            "⚽ Time 1",
+            placeholder="Ex.: Arsenal"
+        )
+
+
+    with col2:
+
+        equipa2 = st.text_input(
+            "⚽ Time 2",
+            placeholder="Ex.: Chelsea"
+        )
+
+
+    analisar = st.button(
+        "🤖 ANALISAR H2H",
+        use_container_width=True
+    )
+
+
+    if analisar:
+
+        if not equipa1.strip() or not equipa2.strip():
+
+            st.warning(
+                "Digite os dois nomes das equipas."
+            )
+
+            st.stop()
+
+
+        if equipa1.strip().lower() == equipa2.strip().lower():
+
+            st.warning(
+                "As duas equipas precisam ser diferentes."
+            )
+
+            st.stop()
+
+
+        with st.spinner(
+            "A procurar dados H2H e forma recente..."
+        ):
+
+            motor = criar_motor(
+                liga_h2h
+            )
+
+
+            h2h = motor.pesquisar_jogo(
+                equipa1.strip(),
+                equipa2.strip()
+            )
+
+
+            analise = motor.analisar_confronto_completo(
+                equipa1.strip(),
+                equipa2.strip()
+            )
+
+
+        # ----------------------------------------------------
+        # DADOS ENCONTRADOS
+        # ----------------------------------------------------
+
+        if h2h:
+
+            st.success(
+                f"✅ {len(h2h)} confronto(s) encontrado(s)."
+            )
+
+        else:
+
+            st.info(
+                "ℹ️ Não foram encontrados confrontos "
+                "diretos suficientes nesta competição. "
+                "A análise usa os dados de forma recente "
+                "disponíveis para as equipas."
+            )
+
+
+        st.markdown("---")
+
+
+        # ----------------------------------------------------
+        # VEREDITO
+        # ----------------------------------------------------
+
+        mercados = analise.get(
+            "mercados",
+            {}
+        )
+
+
+        if not mercados:
+
+            st.error(
+                "Não existem dados suficientes para calcular "
+                "os mercados."
+            )
+
+            st.stop()
+
+
+        ordenados = sorted(
+            mercados.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+
+        melhor_nome = ordenados[0][0]
+
+        melhor_pct = ordenados[0][1]
+
+
+        st.subheader(
+            "🧠 Melhor oportunidade"
+        )
+
+
+        st.success(
+            f"🎯 **{melhor_nome}**\n\n"
+            f"Probabilidade calculada: **{melhor_pct}%**"
+        )
+
+
+        # ----------------------------------------------------
+        # MERCADOS
+        # ----------------------------------------------------
+
+        st.subheader(
+            "📊 Probabilidades dos mercados"
+        )
+
+
+        mercados_desejados = [
+
+            "Ambas Marcam",
+
+            "Mais de 1.5 golos",
+
+            "Mais de 2.5 golos",
+
+            "Menos de 3.5 golos",
+
+            "Menos de 4.5 golos",
+
+            "Casa ou Empate (1X)",
+
+            "Fora ou Empate (X2)",
+
+            "Vitória Casa",
+
+            "Vitória Fora"
+
+        ]
+
+
+        for mercado in mercados_desejados:
+
+            pct = mercados.get(
+                mercado,
+                0
+            )
+
+
+            col_a, col_b = st.columns(
+                [4, 1]
+            )
+
+
+            with col_a:
+
+                st.write(
+                    f"**{mercado}**"
+                )
+
+                st.progress(
+                    min(
+                        pct / 100,
+                        1.0
+                    )
+                )
+
+
+            with col_b:
+
+                st.metric(
+                    "Chance",
+                    f"{pct}%"
+                )
+
+
+        # ----------------------------------------------------
+        # DESTAQUES
+        # ----------------------------------------------------
+
+        st.markdown("---")
+
+        st.subheader(
+            "🏆 Destaques"
+        )
+
+
+        primeiro = ordenados[0]
+
+
+        segundo = (
+            ordenados[1]
+            if len(ordenados) > 1
+            else primeiro
+        )
+
+
+        terceiro = (
+            ordenados[2]
+            if len(ordenados) > 2
+            else segundo
+        )
+
+
+        c1, c2, c3 = st.columns(3)
+
+
+        with c1:
+
+            st.info(
+                f"""
+🥇 **Melhor oportunidade**
+
+{primeiro[0]}
+
+**{primeiro[1]}%**
+"""
+            )
+
+
+        with c2:
+
+            st.info(
+                f"""
+🥈 **Segunda melhor**
+
+{segundo[0]}
+
+**{segundo[1]}%**
+"""
+            )
+
+
+        with c3:
+
+            st.info(
+                f"""
+🥉 **Terceira melhor**
+
+{terceiro[0]}
+
+**{terceiro[1]}%**
+"""
+            )
+
+
+        # ----------------------------------------------------
+        # FORMA DAS EQUIPAS
+        # ----------------------------------------------------
+
+        estatisticas = analise.get(
+            "estatisticas",
+            {}
+        )
+
+
+        st.markdown("---")
+
+        st.subheader(
+            "📈 Dados usados pelo modelo"
+        )
+
+
+        a, b = st.columns(2)
+
+
+        with a:
+
+            st.markdown(
+                f"""
+### ⚽ {equipa1}
+
+Média de golos marcados:
+**{estatisticas.get('media_golos_casa', 0)}**
+
+Média de golos sofridos:
+**{estatisticas.get('media_golos_sofridos_casa', 0)}**
+
+Jogos analisados:
+**{estatisticas.get('jogos_casa', 0)}**
+"""
+            )
+
+
+        with b:
+
+            st.markdown(
+                f"""
+### ⚽ {equipa2}
+
+Média de golos marcados:
+**{estatisticas.get('media_golos_fora', 0)}**
+
+Média de golos sofridos:
+**{estatisticas.get('media_golos_sofridos_fora', 0)}**
+
+Jogos analisados:
+**{estatisticas.get('jogos_fora', 0)}**
+"""
+            )
+
+
+        # ----------------------------------------------------
+        # H2H ENCONTRADO
+        # ----------------------------------------------------
+
+        if h2h:
+
+            st.markdown("---")
+
+            st.subheader(
+                "📋 Confrontos encontrados"
+            )
+
+
+            for jogo in h2h[:10]:
+
+                st.write(
+                    f"⚽ **{jogo.get('home_team', '?')}** "
+                    f"vs "
+                    f"**{jogo.get('away_team', '?')}**"
+                )
+
+                st.caption(
+                    f"Resultado: "
+                    f"{jogo.get('score', '?')} | "
+                    f"Data: "
+                    f"{jogo.get('date', '')}"
+                )
